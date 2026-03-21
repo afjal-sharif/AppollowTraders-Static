@@ -1,5 +1,6 @@
 const TELEGRAM_BOT = "8757155296:AAHbLEz15Gp4ccaV0OUpB8oPHwZdJsv-O0s";
 const TELEGRAM_CHAT = "-1003310956167";
+const CRON_SECRET = "apollo-cron-2026-secure";
 
 export default {
   async fetch(request, env) {
@@ -27,6 +28,20 @@ async function handleRequest(request, env) {
   const cookie = request.headers.get("Cookie") || "";
   const loggedIn = cookie.includes("auth=1");
   
+ // Secure Cron Endpoint
+if (url.pathname === "/cron-check") {
+
+  const token = url.searchParams.get("token");
+
+  if(token !== CRON_SECRET){
+    return new Response("Unauthorized",{status:403});
+  }
+
+  await checkVehicleAlerts(env);
+
+  return new Response("Cron executed successfully");
+} 
+ 
   // Static Date License Check
 
 const masterAccess = url.searchParams.get("master") === MASTER_KEY;
@@ -966,6 +981,7 @@ return `
 <select id="vtype" onchange="toggleOtherDoc()">
 <option value="">Select Document Type</option>
 <option>Registration Certificate (Smart Card)</option>
+<option>Route Permit</option>
 <option>Fitness Certificate</option>
 <option>Tax Token</option>
 <option>Insurance Certificate</option>
