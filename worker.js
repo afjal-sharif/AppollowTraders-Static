@@ -361,6 +361,61 @@ function layout(content, active) {
   </div>
 
   <script>
+  // ✅ GLOBAL FUNCTIONS (fix "not defined" errors)
+
+  window.openAddProduct = function () {
+    openModal('addProduct');
+  };
+
+  window.openAddParty = function () {
+    openModal('addParty');
+  };
+
+  window.switchPartyTab = function (type, el) {
+    document.querySelectorAll('.tab').forEach(x => x.classList.remove('active'));
+    if (el) el.classList.add('active');
+  };
+
+  window.openSaleModal = function () {
+    openModal('addSale');
+  };
+
+  window.openPurchaseModal = function () {
+    openModal('addPurchase');
+  };
+
+  window.openPaymentModal = function () {
+    openModal('addPayment');
+  };
+
+  window.openBankModal = function () {
+    openModal('addBank');
+  };
+
+  window.openExpenseModal = function () {
+    openModal('addExpense');
+  };
+
+  window.openExpenseBankModal = function () {
+    openModal('addBank');
+  };
+
+  window.switchPayTab = function (tab, el) {
+    document.querySelectorAll('.tab').forEach(x => x.classList.remove('active'));
+    if (el) el.classList.add('active');
+  };
+
+  window.addHead = function () {
+    alert('Add Head UI not implemented yet');
+  };
+
+  window.addSubHead = function () {
+    alert('Add SubHead UI not implemented yet');
+  }; 
+  window.addEventListener('error', function (e) {
+  alert('JS Error: ' + e.message + ' (line ' + e.lineno + ')');
+  });
+
     function toggleSidebar() {
       document.getElementById('sidebar').classList.toggle('open');
       document.getElementById('overlay').classList.toggle('open');
@@ -373,27 +428,41 @@ function layout(content, active) {
     });
 
     async function api(path, body) {
-      const response = await fetch(path, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body || {})
-      });
-      const data = await response.json().catch(function () {
-        return { success: false, error: 'Invalid server response' };
-      });
-      if (!response.ok || (data && data.success === false && data.error)) {
-        throw new Error((data && data.error) || ('Request failed: ' + response.status));
+      try {
+        const response = await fetch(path, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body || {})
+        });
+
+        const data = await response.json();
+
+        if (!response.ok || (data && data.success === false)) {
+          alert('❌ Error: ' + (data.error || response.status));
+          throw new Error(data.error || 'Request failed');
+        }
+
+        return data;
+      } catch (err) {
+        alert('❌ Network/JS Error: ' + err.message);
+        throw err;
       }
-      return data;
     }
 
     async function loadList(prefix) {
       return api('/api/list', { prefix: prefix });
     }
 
-    async function saveItem(prefix, data, id) {
-      return api('/api/save', { prefix: prefix, data: data, id: id });
-    }
+  async function saveItem(prefix, data, id) {
+  const res = await api('/api/save', { prefix: prefix, data: data, id: id });
+
+  if (!res || !res.success) {
+    alert('❌ Save failed');
+    return null;
+  }
+
+  return res;
+}
 
     async function saveByKey(key, data) {
       return api('/api/save', { key: key, data: data });
@@ -405,8 +474,12 @@ function layout(content, active) {
     }
 
     function openModal(id) {
-      const el = document.getElementById(id);
-      if (el) el.classList.add('open');
+      var el = document.getElementById(id);
+      if (!el) {
+        alert('Modal not found: ' + id);
+        return;
+      }
+      el.classList.add('open');
     }
 
     function closeModal(id) {
@@ -445,6 +518,146 @@ function layout(content, active) {
       });
       if (el) el.classList.add('active');
     }
+    // 🔥 fallback safety (prevents "not defined" crash)
+    function safe(fnName) {
+      return function () {
+        alert('Function not loaded: ' + fnName);
+      };
+    }
+
+    window.openAddProduct = window.openAddProduct || safe('openAddProduct');
+    window.openAddParty = window.openAddParty || safe('openAddParty');
+    window.switchPartyTab = window.switchPartyTab || safe('switchPartyTab');
+    window.openSaleModal = window.openSaleModal || safe('openSaleModal');
+    window.openBankModal = window.openBankModal || safe('openBankModal');
+    window.switchPayTab = window.switchPayTab || safe('switchPayTab');
+    window.addHead = window.addHead || safe('addHead');
+    window.addSubHead = window.addSubHead || safe('addSubHead');
+    window.openExpenseBankModal = window.openExpenseBankModal || safe('openExpenseBankModal');
+
+    window.autoFillDates = function () {
+      var today = todayISO();
+
+      ['purDate', 'saleDate', 'payDate', 'expDate'].forEach(function (id) {
+        var el = document.getElementById(id);
+        if (el && !el.value) el.value = today;
+      });
+    };
+
+    window.autoNumbers = function () {
+      var map = {
+        purNo: 'PUR',
+        saleNo: 'INV',
+        payNo: 'PAY',
+        expNo: 'EXP'
+      };
+
+      Object.keys(map).forEach(function (id) {
+        var el = document.getElementById(id);
+        if (el && !el.value) el.value = txnNo(map[id]);
+      });
+    };
+
+    window.addEventListener('load', function () {
+      autoFillDates();
+      autoNumbers();
+    });
+
+    // ================= GLOBAL CORE FUNCTIONS =================
+
+    // ---------- INVENTORY ----------
+    window.syncSkuAndDuplicate = function () {
+      var name = document.getElementById('pName')?.value || '';
+      var skuInput = document.getElementById('pSku');
+      if (!skuInput.value) {
+        skuInput.value = name.substring(0, 4).toUpperCase() + '-' + Math.random().toString(36).slice(2, 6).toUpperCase();
+      }
+    };
+
+    window.saveProduct = async function () {
+      var name = document.getElementById('pName').value.trim();
+      if (!name) return alert('Product name required');
+
+      var sku = document.getElementById('pSku').value.trim();
+      var data = {
+        name: name,
+        sku: sku,
+        unit: document.getElementById('pUnit').value || 'pcs',
+        purchasePrice: +document.getElementById('pBuy').value || 0,
+        salePrice: +document.getElementById('pSell').value || 0,
+        stock: +document.getElementById('pStock').value || 0
+      };
+
+      await saveItem('product:', data);
+      closeModal('addProduct');
+      location.reload();
+    };
+
+    // ---------- PARTIES ----------
+    window.partyDuplicateHint = function () {};
+
+    window.saveParty = async function () {
+      var name = document.getElementById('partyName').value.trim();
+      if (!name) return alert('Name required');
+
+      await saveItem('party:', {
+        name: name,
+        phone: document.getElementById('partyPhone').value,
+        address: document.getElementById('partyAddr').value,
+        type: 'customer',
+        balance: 0
+      });
+
+      closeModal('addParty');
+      location.reload();
+    };
+
+    // ---------- PAYMENT ----------
+    window.resolvePayParty = function () {};
+
+    window.choosePayMethod = function (method) {
+      document.getElementById('payMethod').value = method;
+    };
+
+    window.savePayment = async function () {
+      var amount = +document.getElementById('payAmount').value || 0;
+      if (amount <= 0) return alert('Enter amount');
+
+      await saveItem('payment:', {
+        amount: amount,
+        date: todayISO(),
+        method: document.getElementById('payMethod').value || 'cash'
+      });
+
+      closeModal('addPayment');
+      location.reload();
+    };
+
+    // ---------- BANK ----------
+    window.openBankModal = function () {
+      openModal('addBank');
+    };
+
+    // ---------- EXPENSE ----------
+    window.openExpenseModal = function () {
+      openModal('addExpense');
+    };
+
+    window.openExpenseBankModal = function () {
+      openModal('addBank');
+    };
+
+    window.addHead = function () {
+      var name = prompt('Enter expense head');
+      if (!name) return;
+      saveItem('expHead:', { name: name });
+    };
+
+    window.addSubHead = function () {
+      var name = prompt('Enter sub head');
+      if (!name) return;
+      saveItem('expSubHead:', { name: name });
+    };
   </script>
 </body>
 </html>`;
@@ -718,10 +931,14 @@ function inventoryPage() {
       var editKey = document.getElementById('editProductKey').value;
       var name = document.getElementById('pName').value.trim();
       var sku = document.getElementById('pSku').value.trim() || autoSku(name);
+      document.getElementById('pSku').value = sku;
       var duplicate = findProductDuplicate(name, editKey);
 
       if (!name) return alert('Product name required');
-      if (duplicate) return alert('Product already exists: ' + duplicate.name + ' (SKU: ' + (duplicate.sku || '-') + ')');
+      if (duplicate) {
+        alert('⚠️ Product already exists:\n' + duplicate.name + '\nSKU: ' + (duplicate.sku || '-'));
+        return;
+      }
 
       var data = {
         name: name,
@@ -733,7 +950,10 @@ function inventoryPage() {
       };
 
       if (editKey) await saveByKey(editKey, data);
-      else await saveItem('product:', data);
+      else {
+  const res = await saveItem('product:', data);
+  if (!res || !res.key) return alert('Failed to save product');
+}
 
       closeModal('addProduct');
       await loadProducts();
@@ -862,12 +1082,22 @@ function partiesPage() {
     }
 
     function openAddParty() {
-      document.getElementById('partyModalTitle').textContent = 'Add ' + (partyTab === 'customer' ? 'Customer' : 'Supplier');
+      var modal = document.getElementById('addParty');
+
+      if (!modal) {
+        alert('Modal not found');
+        return;
+      }
+
+      document.getElementById('partyModalTitle').textContent =
+        'Add ' + (partyTab === 'customer' ? 'Customer' : 'Supplier');
+
       document.getElementById('partyEditKey').value = '';
       document.getElementById('partyName').value = '';
       document.getElementById('partyPhone').value = '';
       document.getElementById('partyAddr').value = '';
       document.getElementById('partyDuplicate').textContent = '';
+
       openModal('addParty');
     }
 
@@ -887,6 +1117,10 @@ function partiesPage() {
       var editKey = document.getElementById('partyEditKey').value;
       var name = document.getElementById('partyName').value.trim();
       if (!name) return alert('Name required');
+      if (!name) {
+      alert('Name required');
+      return;
+    }
 
       var duplicate = findPartyDuplicate(name, editKey);
       if (duplicate) return alert((partyTab === 'customer' ? 'Customer' : 'Supplier') + ' already exists');
@@ -1006,7 +1240,7 @@ function purchasesPage() {
     }
 
     function openPurchaseModal() {
-      document.getElementById('purDate').value = todayISO();
+      document.getElementById('purDate').value = todayISO() || new Date().toISOString().slice(0,10);
       document.getElementById('purNo').value = txnNo('PUR');
       document.getElementById('purSupplier').value = '';
       document.getElementById('purPaid').value = '';
@@ -1067,9 +1301,9 @@ function purchasesPage() {
     }
 
     function purEnter(e, index) {
-      if (e.key !== 'Enter') return;
-      e.preventDefault();
-      if (index === purItems.length - 1) addPurItem();
+      if (e.key === 'Enter') {
+        e.preventDefault();
+      }
     }
 
     async function savePurchase() {
@@ -1272,10 +1506,10 @@ function salesPage() {
     }
 
     function saleEnter(e, index) {
-      if (e.key !== 'Enter') return;
-      e.preventDefault();
-      if (index === saleItems.length - 1) addSaleItem();
-    }
+      if (e.key === 'Enter') {
+        e.preventDefault();
+      }
+     }
 
     async function saveSale() {
       var customerKey = document.getElementById('saleCustomer').value;
@@ -1288,7 +1522,7 @@ function salesPage() {
       for (var i = 0; i < validItems.length; i++) {
         var product = saleProducts.find(function (p) { return p._key === validItems[i].productKey; });
         if (!product) return alert('Invalid product selected');
-        if (Number(validItems[i].qty || 0) > Number(product.stock || 0)) {
+        if ((product.stock || 0) < (validItems[i].qty || 0)) {
           return alert('Insufficient stock for ' + product.name + '. Available: ' + fmt(product.stock || 0));
         }
       }
@@ -1363,15 +1597,27 @@ function salesPage() {
 
     function printInvoice() {
       if (!currentInvoice) return;
+
       var area = document.getElementById('invoicePrintArea');
       if (!area) return;
+
       var w = window.open('', '_blank');
-      if (!w) return alert('Please allow popups to print invoice');
-      w.document.write('<html><head><title>Invoice ' + (currentInvoice.invoiceNo || '') + '</title>' +
-        '<style>body{font-family:Arial,sans-serif;padding:20px}.tbl{width:100%;border-collapse:collapse}.tbl th,.tbl td{border:1px solid #ddd;padding:8px;text-align:left}.tbl .r{text-align:right}</style>' +
-        '</head><body>' + area.innerHTML + '</body></html>');
+      if (!w) return alert('Allow popup to print');
+
+      w.document.write(
+        '<html><head><title>Invoice ' + (currentInvoice.invoiceNo || '') + '</title>' +
+        '<style>' +
+        'body{font-family:Arial;padding:20px}' +
+        '.tbl{width:100%;border-collapse:collapse}' +
+        '.tbl th,.tbl td{border:1px solid #ddd;padding:8px}' +
+        '.r{text-align:right}' +
+        '</style>' +
+        '</head><body>' +
+        area.innerHTML +
+        '</body></html>'
+      );
+
       w.document.close();
-      w.focus();
       w.print();
     }
 
@@ -1384,6 +1630,17 @@ function salesPage() {
 // ============================================================
 function paymentsPage() {
   return `
+<div class="modal-overlay" id="addBank">
+  <div class="modal">
+    <h3>Add Bank</h3>
+    <input id="bankName" placeholder="Bank name">
+    <div style="margin-top:10px;text-align:right">
+      <button class="btn btn-outline" onclick="closeModal('addBank')">Cancel</button>
+      <button class="btn btn-primary" onclick="saveItem('bank:',{name:document.getElementById('bankName').value})">Save</button>
+    </div>
+  </div>
+</div>
+
   <div class="page-header">
     <div>
       <div class="page-title">Receipts & Payments</div>
@@ -1556,6 +1813,7 @@ function paymentsPage() {
       var selectedName = normalize(document.getElementById('payPartySearch').value);
       var requiredType = payTab === 'receipt' ? 'customer' : 'supplier';
       var party = allParties.find(function (p) {
+  if (!p.name) return false;
         return p.type === requiredType && normalize(p.name) === selectedName;
       });
       document.getElementById('payParty').value = party ? party._key : '';
@@ -1596,6 +1854,12 @@ function paymentsPage() {
       var updatedParty = cleanForSave(party);
       updatedParty.balance = Number(party.balance || 0) - amount;
       await saveByKey(party._key, updatedParty);
+      if (method === 'bank') {
+  var updatedBank = cleanForSave(bank);
+  if (payTab === 'receipt') updatedBank.openingBalance += amount;
+  else updatedBank.openingBalance -= amount;
+  await saveByKey(bank._key, updatedBank);
+}
 
       closeModal('addPayment');
       await initPayments();
@@ -1651,6 +1915,17 @@ function paymentsPage() {
 // ============================================================
 function expensesPage() {
   return `
+<div class="modal-overlay" id="addBank">
+  <div class="modal">
+    <h3>Add Bank</h3>
+    <input id="bankName" placeholder="Bank name">
+    <div style="margin-top:10px;text-align:right">
+      <button class="btn btn-outline" onclick="closeModal('addBank')">Cancel</button>
+      <button class="btn btn-primary" onclick="saveItem('bank:',{name:document.getElementById('bankName').value})">Save</button>
+    </div>
+  </div>
+</div>
+
   <div class="page-header">
     <div>
       <div class="page-title">Expenses</div>
@@ -1838,9 +2113,9 @@ function expensesPage() {
       if (!name) return;
       var exists = expHeads.find(function (h) { return normalize(h.name) === normalize(name); });
       if (exists) {
-        document.getElementById('headWarn').textContent = 'Existing head: ' + exists.name;
-        return;
-      }
+      document.getElementById('headWarn').textContent = '⚠️ Already exists: ' + exists.name;
+      return;
+    }
       document.getElementById('headWarn').textContent = '';
       await saveItem('exphead:', { name: name });
       document.getElementById('newHead').value = '';
@@ -1895,38 +2170,45 @@ function expensesPage() {
       document.getElementById('expBankWrap').classList.toggle('hidden', method !== 'bank');
     }
 
-    async function saveExpense() {
-      var headKey = document.getElementById('expHead').value;
-      var subKey = document.getElementById('expSubHead').value;
-      var amount = Number(document.getElementById('expAmt').value || 0);
-      var method = document.getElementById('expMethod').value;
-      var bankKey = document.getElementById('expBank').value;
+async function saveExpense() {
+  var headKey = document.getElementById('expHead').value;
+  var subKey = document.getElementById('expSubHead').value;
+  var amount = Number(document.getElementById('expAmt').value || 0);
+  var method = document.getElementById('expMethod').value;
+  var bankKey = document.getElementById('expBank').value;
 
-      var head = expHeads.find(function (h) { return h._key === headKey; });
-      var sub = expSubHeads.find(function (s) { return s._key === subKey; });
-      var bank = allBanks.find(function (b) { return b._key === bankKey; });
+  var head = expHeads.find(h => h._key === headKey);
+  var sub = expSubHeads.find(s => s._key === subKey);
+  var bank = allBanks.find(b => b._key === bankKey);
 
-      if (!head) return alert('Select expense head');
-      if (amount <= 0) return alert('Enter valid amount');
-      if (method === 'bank' && !bank) return alert('Select bank account');
+  if (!head) return alert('Select expense head');
+  if (amount <= 0) return alert('Enter valid amount');
+  if (method === 'bank' && !bank) return alert('Select bank account');
 
-      await saveItem('expense:', {
-        date: document.getElementById('expDate').value || todayISO(),
-        expenseNo: document.getElementById('expNo').value,
-        headId: head._key,
-        headName: head.name,
-        subHeadId: sub ? sub._key : '',
-        subHeadName: sub ? sub.name : '',
-        amount: amount,
-        description: document.getElementById('expDesc').value.trim(),
-        method: method,
-        bankId: method === 'bank' ? bank._key : '',
-        bankName: method === 'bank' ? bank.name : ''
-      });
+  await saveItem('expense:', {
+    date: document.getElementById('expDate').value || todayISO(),
+    expenseNo: document.getElementById('expNo').value,
+    headId: head._key,
+    headName: head.name,
+    subHeadId: sub ? sub._key : '',
+    subHeadName: sub ? sub.name : '',
+    amount: amount,
+    description: document.getElementById('expDesc').value.trim(),
+    method: method,
+    bankId: method === 'bank' ? bank._key : '',
+    bankName: method === 'bank' ? bank.name : ''
+  });
 
-      closeModal('addExpense');
-      await initExpenses();
-    }
+  // ✅ FIXED POSITION
+  if (method === 'bank') {
+    var updatedBank = cleanForSave(bank);
+    updatedBank.openingBalance -= amount;
+    await saveByKey(bank._key, updatedBank);
+  }
+
+  closeModal('addExpense');
+  await initExpenses();
+}
 
     function openExpenseBankModal() {
       document.getElementById('expBankName').value = '';
@@ -2174,13 +2456,13 @@ function profitLossPage() {
 
         '<div class="pl-row"><span>Revenue (' + sales.length + ' sales)</span><span class="bold">' + fmt(revenue) + '</span></div>' +
         '<div class="pl-row"><span>Cost of Goods Sold</span><span>' + fmt(cogs) + '</span></div>' +
-        '<div class="pl-row total"><span>Gross Profit</span><span class="' + (gross >= 0 ? 'text-success' : 'text-danger') + '">' + fmt(gross) + '</span></div>' +
+        '<div class="pl-row total" style="font-size:16px"><span>Gross Profit</span><span class="' + (gross >= 0 ? 'text-success' : 'text-danger') + '">' + fmt(gross) + '</span></div>' +
 
         '<div class="pl-row" style="font-weight:700;margin-top:8px"><span>Operating Expenses</span><span></span></div>' +
         expenseRows +
         '<div class="pl-row"><span>Total Operating Expenses</span><span>' + fmt(operating) + '</span></div>' +
 
-        '<div class="pl-row total"><strong>Net Profit / (Loss)</strong><strong class="' + (net >= 0 ? 'text-success' : 'text-danger') + '">' + fmt(net) + '</strong></div>' +
+        '<div class="pl-row total" style="font-size:16px"><strong>Net Profit / (Loss)</strong><strong class="' + (net >= 0 ? 'text-success' : 'text-danger') + '">' + fmt(net) + '</strong></div>' +
 
         '<div class="pl-row"><span>Gross Margin</span><span>' + grossMargin.toFixed(2) + '%</span></div>' +
         '<div class="pl-row"><span>Net Margin</span><span>' + netMargin.toFixed(2) + '%</span></div>';
