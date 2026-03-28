@@ -308,6 +308,50 @@ function getCSS() {
     .login-card .err{color:var(--danger);font-size:13px;margin-bottom:12px}
 
     .hidden{display:none !important}
+
+    .btn-sm {
+      padding: 6px 12px;
+      font-size: 12px;
+      border-radius: 6px;
+    }
+
+    .btn {
+      transition: all 0.2s ease;
+    }
+
+    .btn:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 4px 10px rgba(0,0,0,0.08);
+    }
+  @media (max-width: 600px) {
+    .tbl thead {
+      display: none;
+    }
+
+    .tbl tr {
+      display: block;
+      border-bottom: 1px solid #eee;
+      margin-bottom: 10px;
+    }
+
+    .tbl td {
+      display: flex;
+      justify-content: space-between;
+      padding: 8px;
+    }
+
+    .tbl td::before {
+      font-weight: bold;
+      color: #6b7280;
+    }
+
+    .tbl td:nth-child(1)::before { content: "Name"; }
+    .tbl td:nth-child(2)::before { content: "SKU"; }
+    .tbl td:nth-child(3)::before { content: "Buy"; }
+    .tbl td:nth-child(4)::before { content: "Sell"; }
+    .tbl td:nth-child(5)::before { content: "Stock"; }
+    .tbl td:nth-child(6)::before { content: "Actions"; }
+  }
   </style>`;
 }
 
@@ -704,120 +748,203 @@ function inventoryPage() {
     </div>
   </div></div>
 
-  <script>
-  var allProducts = [];
+<script>
+  var products = [];
+  var editKey = null;
 
-  function autoSku(name) {
-    var cleaned = String(name||'').replace(/[^a-zA-Z0-9]/g,'').toUpperCase().slice(0,4)||'PRD';
-    return cleaned+'-'+Math.random().toString(36).slice(2,6).toUpperCase();
+  function generateSKU(name) {
+    var clean = String(name || '')
+      .replace(/[^a-zA-Z0-9]/g, '')
+      .toUpperCase()
+      .slice(0, 4) || 'PRD';
+
+    var rand = Math.random().toString(36).slice(2,6).toUpperCase();
+
+    return clean + '-' + rand;
   }
 
-  function findProductDuplicate(name, editKey) {
-    var n = normalize(name);
-    return allProducts.find(function(p){ return normalize(p.name)===n && p._key!==editKey; });
+  // LOAD
+  async function loadProducts() {
+    try {
+      console.log('Loading products...');
+
+      var res = await fetch('/api/list', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prefix: 'product:' })
+      });
+
+      var data = await res.json();
+
+      console.log('Loaded:', data);
+
+      products = Array.isArray(data) ? data : [];
+
+      renderProducts(products);
+
+    } catch (err) {
+      console.error(err);
+      alert('Load failed');
+    }
   }
 
-  window.syncSkuAndDuplicate = function() {
-    var name = document.getElementById('pName').value.trim();
-    var skuInput = document.getElementById('pSku');
-    var editKey = document.getElementById('editProductKey').value;
+  // RENDER
+  function renderProducts(list) {
+    var body = document.getElementById('productBody');
+    if (!body) return;
 
-    if (!skuInput.value && name.length > 2) {
-      skuInput.value = autoSku(name);
+    if (!list.length) {
+      body.innerHTML = '<tr><td colspan="6">No products</td></tr>';
+      return;
     }
 
-    var dup = findProductDuplicate(name, editKey);
+    var html = '';
 
-    document.getElementById('productDuplicate').textContent =
-      dup ? '⚠️ Duplicate: ' + dup.name : '';
-  };
+    for (var i = 0; i < list.length; i++) {
+      var p = list[i];
 
-
-// ---------- RENDER ----------
-function renderProducts(list) {
-  var body = document.getElementById('productBody');
-  if (!body) return;
-
-  if (!list.length) {
-    body.innerHTML = '<tr><td colspan="6">No products found</td></tr>';
-    return;
-  }
-
-  body.innerHTML = list.map(function(p) {
-    return '<tr>' +
-      '<td class="bold">' + (p.name||'') + '</td>' +
-      '<td>' + (p.sku||'') + '</td>' +
-      '<td class="r">' + fmt(p.purchasePrice||0) + '</td>' +
-      '<td class="r">' + fmt(p.salePrice||0) + '</td>' +
-      '<td class="r">' + fmt(p.stock||0) + '</td>' +
-      '<td class="r">' +
-        '<button class="btn btn-outline btn-sm" onclick="editProduct(\''+p._key+'\')">✏️</button> ' +
-        '<button class="btn btn-danger btn-sm" onclick="removeProduct(\''+p._key+'\')">🗑️</button>' +
+    html += '<tr>' +
+      '<td><b>' + (p.name || '') + '</b></td>' +
+      '<td>' + (p.sku || '') + '</td>' +
+      '<td>' + (p.purchasePrice || 0) + '</td>' +
+      '<td>' + (p.salePrice || 0) + '</td>' +
+      '<td>' + (p.stock || 0) + '</td>' +
+      '<td>' +
+        '<div style="display:flex;gap:6px;justify-content:flex-end">' +
+          '<button data-edit="' + p._key + '" class="btn btn-outline btn-sm">✏️</button>' +
+          '<button data-key="' + p._key + '" class="btn btn-danger btn-sm delBtn">🗑</button>' +
+        '</div>' +
       '</td>' +
     '</tr>';
-  }).join('');
-}
+    }
 
-// ---------- LOAD ----------
-window.loadProducts = async function () {
-  try {
-    console.log('🔄 Loading products...');
-
-    var list = await loadList('product:');
-
-    console.log('📦 Products:', list);
-
-    allProducts = list || [];
-
-    renderProducts(allProducts);
-
-  } catch (err) {
-    console.error(err);
-    alert('❌ Load failed');
+    body.innerHTML = html;
   }
-}
 
-// ---------- EDIT ----------
-window.editProduct = function(key) {
-  var p = allProducts.find(function(x){ return x._key === key; });
-  if (!p) return alert('Product not found');
+  document.addEventListener('click', function(e) {
 
-  document.getElementById('productModalTitle').textContent = 'Edit Product';
-  document.getElementById('editProductKey').value = key;
+    // DELETE
+    if (e.target.classList.contains('delBtn')) {
+      var key = e.target.getAttribute('data-key');
+      deleteProduct(key);
+    }
 
-  document.getElementById('pName').value = p.name || '';
-  document.getElementById('pSku').value = p.sku || '';
-  document.getElementById('pUnit').value = p.unit || 'pcs';
-  document.getElementById('pBuy').value = p.purchasePrice || 0;
-  document.getElementById('pSell').value = p.salePrice || 0;
-  document.getElementById('pStock').value = p.stock || 0;
+    // EDIT
+    if (e.target.hasAttribute('data-edit')) {
+      var key = e.target.getAttribute('data-edit');
+      openEditProduct(key);
+    }
 
-  openModal('addProduct');
-};
+  });
 
-// ---------- DELETE ----------
-window.removeProduct = async function(key) {
-  if (!confirm('Delete this product?')) return;
+  // SAVE
+  window.saveProduct = async function () {
+    var name = document.getElementById('pName').value.trim();
 
-  await deleteItem(key);
+    if (!name) {
+      alert('Enter product name');
+      return;
+    }
 
-  alert('🗑️ Product deleted');
+    var skuInput = document.getElementById('pSku');
 
-  await loadProducts();
-};
+    var sku = skuInput.value.trim();
+    if (!sku) {
+      sku = generateSKU(name);
+      skuInput.value = sku;
+    }
 
-// ---------- FILTER ----------
-window.filterProducts = function(q) {
-  var t = normalize(q);
-  renderProducts(allProducts.filter(function(p){
-    return normalize(p.name).includes(t) || normalize(p.sku).includes(t);
-  }));
-};
+    var data = {
+      name: name,
+      sku: sku,
+      unit: document.getElementById('pUnit').value || 'pcs',
+      purchasePrice: Number(document.getElementById('pBuy').value || 0),
+      salePrice: Number(document.getElementById('pSell').value || 0),
+      stock: Number(document.getElementById('pStock').value || 0)
+    };
 
-// ---------- INIT ----------
-document.addEventListener('DOMContentLoaded', function () {
-  loadProducts();
-});
+    var payload;
+
+    if (editKey) {
+      payload = {
+        key: editKey,
+        data: data
+      };
+    } else {
+      payload = {
+        prefix: 'product:',
+        data: data
+      };
+    }
+
+    var res = await fetch('/api/save', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+
+    var json = await res.json();
+
+    if (!json || !json.key) {
+      alert('Save failed');
+      return;
+    }
+
+    editKey = null;
+
+    closeModal('addProduct');
+    loadProducts();
+  };
+
+  // DELETE
+  window.deleteProduct = async function (key) {
+    if (!confirm('Delete?')) return;
+
+    await fetch('/api/delete', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ key: key })
+    });
+
+    loadProducts();
+  };
+
+  // SEARCH
+  window.filterProducts = function (q) {
+    var t = String(q || '').toLowerCase();
+
+    var filtered = products.filter(function (p) {
+      return (p.name || '').toLowerCase().includes(t) ||
+            (p.sku || '').toLowerCase().includes(t);
+    });
+
+    renderProducts(filtered);
+  };
+
+  function openEditProduct(key) {
+    var p = products.find(function(x) {
+      return x._key === key;
+    });
+
+    if (!p) {
+      alert('Product not found');
+      return;
+    }
+
+    editKey = key;
+
+    document.getElementById('pName').value = p.name || '';
+    document.getElementById('pSku').value = p.sku || '';
+    document.getElementById('pUnit').value = p.unit || 'pcs';
+    document.getElementById('pBuy').value = p.purchasePrice || 0;
+    document.getElementById('pSell').value = p.salePrice || 0;
+    document.getElementById('pStock').value = p.stock || 0;
+
+    openModal('addProduct');
+  }
+
+  // INIT
+  window.addEventListener('load', loadProducts);
   </script>`;
 }
 
