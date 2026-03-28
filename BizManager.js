@@ -955,11 +955,11 @@ function partiesPage() {
   return `
   <div class="page-header">
     <div><div class="page-title">Customers & Suppliers</div><div class="page-sub">Manage business contacts</div></div>
-    <button class="btn btn-primary" onclick="openAddParty()">➕ Add</button>
+    <button class="btn btn-primary" id="addPartyBtn">➕ Add</button>
   </div>
   <div class="tabs">
-    <button class="tab active" onclick="switchPartyTab('customer',this)">Customers</button>
-    <button class="tab" onclick="switchPartyTab('supplier',this)">Suppliers</button>
+    <button class="tab active" data-tab="customer">Customers</button>
+    <button class="tab" data-tab="supplier">Suppliers</button>
   </div>
   <div class="search-wrap">
     <span class="icon">🔍</span>
@@ -990,6 +990,28 @@ function partiesPage() {
   <script>
   var allParties = [];
   var partyTab = 'customer';
+
+  document.getElementById('addPartyBtn').onclick = function(){
+    openAddParty();
+  };
+
+  document.addEventListener('click', function(e){
+
+    if (e.target.classList.contains('tab')) {
+      var type = e.target.getAttribute('data-tab');
+
+      partyTab = type;
+
+      document.querySelectorAll('.tab').forEach(function(x){
+        x.classList.remove('active');
+      });
+
+      e.target.classList.add('active');
+
+      renderParties();
+    }
+
+  });
 
   function findPartyDuplicate(name, editKey) {
     var n = normalize(name);
@@ -1065,7 +1087,7 @@ function partiesPage() {
             '<td class="text-muted">'+(p.phone||'')+'</td>'+
             '<td class="text-muted">'+(p.address||'')+'</td>'+
             '<td class="r bold '+((p.balance||0)>0?'text-danger':'text-success')+'">'+fmt(p.balance||0)+'</td>'+
-            '<td class="r"><button class="btn btn-outline btn-sm" onclick="editParty(\''+p._key+'\')">✏️</button></td>'+
+            '<td class="r"><button class="btn btn-outline btn-sm editPartyBtn" data-key="' + p._key + '">✏️</button></td>'+
           '</tr>';
         }).join('');
   }
@@ -1076,6 +1098,15 @@ function partiesPage() {
       return p.type===partyTab && (normalize(p.name).includes(t)||normalize(p.phone).includes(t)||normalize(p.address).includes(t));
     }));
   };
+
+  document.addEventListener('click', function(e){
+
+    if (e.target.classList.contains('editPartyBtn')) {
+      var key = e.target.getAttribute('data-key');
+      editParty(key);
+    }
+
+  });
 
   window.editParty = async function(key) {
     var p = allParties.find(function(x){ return x._key===key; });
