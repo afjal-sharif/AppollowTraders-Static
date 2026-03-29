@@ -825,7 +825,9 @@ function inventoryPage() {
 
     // DELETE
     if (e.target.classList.contains('delBtn')) {
-      var key = e.target.getAttribute('data-key');
+      var el = e.target.closest('[data-key]');
+            if (!el) return;
+                  var key = el.getAttribute('data-key');
       deleteProduct(key);
     }
 
@@ -1126,416 +1128,342 @@ function partiesPage() {
 }
 
 // ============================================================
-// PURCHASES
+// PURCHASES MODULE
 // ============================================================
 function purchasesPage() {
   return `
   <div class="page-header">
-    <div><div class="page-title">Purchases</div><div class="page-sub">Purchase products from suppliers</div></div>
-    <button class="btn btn-primary" onclick="openPurchaseModal()">➕ New Purchase</button>
+    <div>
+      <div class="page-title">Purchases</div>
+      <div class="page-sub">Purchase products from suppliers</div>
+    </div>
+    <button class="btn btn-primary" onclick="window.openPurchaseModal()">➕ New Purchase</button>
   </div>
+
   <div class="card" style="padding:0;overflow:hidden">
     <div class="table-wrap">
-      <table class="tbl"><thead><tr><th>Date</th><th>Purchase #</th><th>Supplier</th><th class="r">Items</th><th class="r">Total</th><th class="r">Paid</th><th class="r">Due</th></tr></thead><tbody id="purchaseBody"></tbody></table>
+      <table class="tbl">
+        <thead>
+          <tr>
+            <th>Date</th>
+            <th>Purchase #</th>
+            <th>Supplier</th>
+            <th class="r">Items</th>
+            <th class="r">Total</th>
+            <th class="r">Paid</th>
+            <th class="r">Due</th>
+            <th class="r">Actions</th>
+          </tr>
+        </thead>
+        <tbody id="purchaseBody"></tbody>
+      </table>
     </div>
   </div>
 
-  <div class="modal-overlay" id="addPurchase"><div class="modal">
-    <h3>New Purchase</h3>
-    <div class="form-row">
-      <div><label>Date</label><input type="date" id="purDate"></div>
-      <div><label>Purchase Number</label><input id="purNo" readonly></div>
+  <div class="modal-overlay" id="addPurchase">
+    <div class="modal">
+      <h3 id="purModalTitle">New Purchase</h3>
+      <div class="form-row">
+        <div>
+          <label>Date</label>
+          <input type="date" id="purDate">
+        </div>
+        <div>
+          <label>Purchase Number</label>
+          <input id="purNo" readonly>
+        </div>
+      </div>
+      <div class="form-group">
+        <label>Supplier</label>
+        <select id="purSupplier"></select>
+      </div>
+      <datalist id="purProductOptions"></datalist>
+      <div style="display:flex;justify-content:space-between;align-items:center;margin:12px 0 8px">
+        <span style="font-weight:600;font-size:13px">Items</span>
+        <button class="btn btn-outline btn-sm" onclick="window.addPurItem()">➕ Add Item</button>
+      </div>
+      
+      <div id="purItems"></div>
+      
+      <div class="form-row" style="margin-top:12px">
+        <div class="form-row">
+          <div>
+            <label>Discount</label>
+            <input type="number" id="purDiscount" value="0" oninput="window.calcPurTotal()">
+          </div>
+          <div>
+            <label>Extra</label>
+            <input type="number" id="purExtra" value="0" oninput="window.calcPurTotal()">
+          </div>
+        </div>
+        <div class="form-row">
+          <div>
+            <label>VAT Type</label>
+            <select id="purVatType" onchange="window.calcPurTotal()">
+              <option value="percent">%</option>
+              <option value="flat">Flat</option>
+            </select>
+          </div>
+          <div>
+            <label>VAT</label>
+            <input type="number" id="purVat" value="0" oninput="window.calcPurTotal()">
+          </div>
+        </div>
+        <div>
+          <label>Total</label>
+          <div id="purTotal" style="font-size:18px;font-weight:700">0</div>
+        </div>
+        <div>
+          <label>Paid</label>
+          <input type="number" id="purPaid" placeholder="0">
+        </div>
+      </div>
+
+      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">
+        <button class="btn btn-outline" onclick="closeModal('addPurchase')">Cancel</button>
+        <button class="btn btn-primary" onclick="window.savePurchase()">Save Purchase</button>
+      </div>
     </div>
-    <div class="form-group"><label>Supplier</label><select id="purSupplier"></select></div>
-    <datalist id="purProductOptions"></datalist>
-    <div style="display:flex;justify-content:space-between;align-items:center;margin:12px 0 8px">
-      <span style="font-weight:600;font-size:13px">Items</span>
-      <button class="btn btn-outline btn-sm" onclick="addPurItem()">➕ Add Item</button>
+  </div>
+
+  <div class="modal-overlay" id="viewPurchase">
+    <div class="modal" style="max-width:800px">
+      <h3>Purchase Invoice</h3>
+      <div id="purchaseInvoiceContent"></div>
+      <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:14px">
+        <button class="btn btn-outline" onclick="closeModal('viewPurchase')">Close</button>
+        <button class="btn btn-primary" onclick="window.printPurchase()">🖨 Print</button>
+      </div>
     </div>
-    <div id="purItems"></div>
-    <div class="form-row" style="margin-top:12px">
-      <div><label>Total</label><div id="purTotal" style="font-size:18px;font-weight:700">0</div></div>
-      <div><label>Amount Paid</label><input type="number" id="purPaid" placeholder="0"></div>
-    </div>
-    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">
-      <button class="btn btn-outline" onclick="closeModal('addPurchase')">Cancel</button>
-      <button class="btn btn-primary" onclick="savePurchase()">Save Purchase</button>
-    </div>
-  </div></div>
+  </div>
 
   <script>
+  var editKey = null;
   var purProducts = [];
   var purSuppliers = [];
   var purItems = [];
+  var documentData = [];
 
-  async function initPurchases() {
+  window.initPurchases = async function() {
     var data = await Promise.all([loadList('purchase:'), loadList('product:'), loadList('party:')]);
-    var purchases = data[0];
-    purProducts = data[1];
-    purSuppliers = data[2].filter(function(p){ return p.type==='supplier'; });
+    documentData = data[0] || [];
+    purProducts = data[1] || [];
+    purSuppliers = (data[2] || []).filter(p => p.type === 'supplier');
 
-    document.getElementById('purSupplier').innerHTML = '<option value="">Select Supplier</option>'+
-      purSuppliers.map(function(s){ return '<option value="'+s._key+'">'+s.name+'</option>'; }).join('');
-    document.getElementById('purProductOptions').innerHTML = purProducts.map(function(p){ return '<option value="'+p.name+'">Stock: '+(p.stock||0)+'</option>'; }).join('');
+    document.getElementById('purSupplier').innerHTML = '<option value="">Select Supplier</option>' +
+      purSuppliers.map(s => '<option value="'+s._key+'">'+s.name+'</option>').join('');
+    
+    document.getElementById('purProductOptions').innerHTML = purProducts.map(p => '<option value="'+p.name+'"></option>').join('');
+    renderPurchaseTable();
+  };
 
-    var sorted = purchases.slice().sort(function(a,b){ return (b.date||'').localeCompare(a.date||''); });
+  function renderPurchaseTable() {
+    var sorted = documentData.slice().sort((a,b) => (b.date||'').localeCompare(a.date||''));
     document.getElementById('purchaseBody').innerHTML = !sorted.length
-      ? '<tr><td colspan="7" class="empty">No purchases yet.</td></tr>'
-      : sorted.map(function(p){
-          var due=(p.total||0)-(p.paid||0);
-          return '<tr>'+
-            '<td>'+(p.date||'')+'</td>'+
-            '<td class="bold">'+(p.purchaseNo||'-')+'</td>'+
-            '<td>'+(p.supplierName||'')+'</td>'+
-            '<td class="r">'+((p.items||[]).length)+'</td>'+
-            '<td class="r bold">'+fmt(p.total)+'</td>'+
-            '<td class="r">'+fmt(p.paid)+'</td>'+
-            '<td class="r bold '+(due>0?'text-danger':'text-success')+'">'+fmt(due)+'</td>'+
-          '</tr>';
-        }).join('');
+      ? '<tr><td colspan="8" class="empty">No purchases yet.</td></tr>'
+      : sorted.map(p => '<tr><td>'+(p.date||'')+'</td><td><span class="clickable viewBtn" data-key="'+p._key+'">'+(p.purchaseNo||'-')+'</span></td><td>'+(p.supplierName||'')+'</td><td class="r">'+((p.items||[]).length)+'</td><td class="r bold">'+fmt(p.total)+'</td><td class="r">'+fmt(p.paid)+'</td><td class="r">'+fmt((p.total||0)-(p.paid||0))+'</td><td class="r"><button class="btn btn-outline btn-sm editPurchaseBtn" data-key="'+p._key+'">✏️</button></td></tr>').join('');
   }
 
   window.openPurchaseModal = function() {
-      if (!purProducts.length) {
-      alert('⚠️ Products not loaded yet');
-      return;
-    }
+    editKey = null;
+    document.getElementById('purModalTitle').innerText = "New Purchase";
     document.getElementById('purDate').value = todayISO();
     document.getElementById('purNo').value = txnNo('PUR');
     document.getElementById('purSupplier').value = '';
     document.getElementById('purPaid').value = '';
+    document.getElementById('purDiscount').value = 0;
+    document.getElementById('purExtra').value = 0;
+    document.getElementById('purVat').value = 0;
     purItems = [];
-    addPurItem();
+    window.addPurItem();
     openModal('addPurchase');
   };
 
   window.addPurItem = function() {
     purItems.push({ productKey:'', productName:'', qty:1, rate:0, amount:0 });
-    renderPurItems();
+    window.renderPurItems();
   };
 
-  function renderPurItems() {
-    var html = '';
-
-    for (var i = 0; i < purItems.length; i++) {
-      var item = purItems[i];
-
-      html += '<div class="form-row" style="grid-template-columns:1fr 70px 100px 100px 36px;align-items:end;margin-bottom:8px">' +
-        '<div><input list="purProductOptions" placeholder="Search product" value="' + (item.productName || '') + '" oninput="purSetProduct(' + i + ',this.value)"></div>' +
-        '<div><input type="number" min="1" value="' + (item.qty || 1) + '" onchange="purQty(' + i + ',this.value)"></div>' +
-        '<div><input type="number" min="0" value="' + (item.rate || 0) + '" onchange="purRate(' + i + ',this.value)"></div>' +
-        '<div style="font-weight:600;padding:10px 0;text-align:right">' + fmt(item.amount) + '</div>' +
-        '<div><button class="btn btn-danger btn-sm" onclick="purRemove(' + i + ')">✕</button></div>' +
-      '</div>';
-    }
+  window.renderPurItems = function() {
+    var html = purItems.map((item, i) => \`
+      <div class="form-row" style="grid-template-columns:1fr 70px 100px 100px 36px;align-items:end;margin-bottom:8px">
+        <div><input list="purProductOptions" placeholder="Product" value="\${item.productName}" oninput="window.purUpdateField(\${i}, 'productName', this.value)"></div>
+        <div><input type="number" value="\${item.qty}" oninput="window.purUpdateField(\${i}, 'qty', this.value)"></div>
+        <div><input type="number" value="\${item.rate}" oninput="window.purUpdateField(\${i}, 'rate', this.value)"></div>
+        <div id="purItemAmt_\${i}" style="font-weight:600;padding:10px 0;text-align:right">\${fmt(item.amount)}</div>
+        <div><button class="btn btn-danger btn-sm" onclick="window.purRemove(\${i})">✕</button></div>
+      </div>\`).join('');
     document.getElementById('purItems').innerHTML = html;
-    var total = purItems.reduce(function(s, i){
-      return s + (i.amount || 0);
-    }, 0);
-    document.getElementById('purTotal').textContent = fmt(total);
-  }
+    window.calcPurTotal();
+  };
 
-  window.purSetProduct = function(idx, name) {
-    var n = normalize(name);
-
-    var p = purProducts.find(function(x){
-      return normalize(x.name).includes(n);
-    });
-
-    purItems[idx].productName = name;
-
-    if (p) {
-      purItems[idx].productKey = p._key;
-      purItems[idx].rate = Number(p.purchasePrice || 0);
+  window.purUpdateField = function(idx, field, val) {
+    if (field === 'productName') {
+      purItems[idx].productName = val;
+      var found = purProducts.find(p => normalize(p.name) === normalize(val));
+      if (found) {
+        purItems[idx].productKey = found._key;
+        purItems[idx].rate = Number(found.purchasePrice || 0);
+        window.renderPurItems(); 
+        return;
+      }
     } else {
-      purItems[idx].productKey = '';
+      purItems[idx][field] = Number(val);
     }
-
-    purItems[idx].amount = Number(purItems[idx].qty || 0) * Number(purItems[idx].rate || 0);
-
-    renderPurItems();
+    purItems[idx].amount = purItems[idx].qty * purItems[idx].rate;
+    if(document.getElementById('purItemAmt_'+idx)) document.getElementById('purItemAmt_'+idx).textContent = fmt(purItems[idx].amount);
+    window.calcPurTotal();
   };
 
-  window.purQty = function(idx, value) {
-    purItems[idx].qty = Math.max(1, Number(value||1));
-    purItems[idx].amount = Number(purItems[idx].qty)*Number(purItems[idx].rate||0);
-    renderPurItems();
-  };
-
-  window.purRate = function(idx, value) {
-    purItems[idx].rate = Math.max(0, Number(value||0));
-    purItems[idx].amount = Number(purItems[idx].qty||0)*Number(purItems[idx].rate);
-    renderPurItems();
+  window.calcPurTotal = function() {
+    var subtotal = purItems.reduce((s, i) => s + (i.amount || 0), 0);
+    var discount = Number(document.getElementById('purDiscount').value || 0);
+    var extra = Number(document.getElementById('purExtra').value || 0);
+    var vat = Number(document.getElementById('purVat').value || 0);
+    var vatType = document.getElementById('purVatType').value;
+    var total = subtotal - discount + extra;
+    total += (vatType === 'percent') ? (total * vat / 100) : vat;
+    document.getElementById('purTotal').textContent = fmt(total);
+    return total;
   };
 
   window.purRemove = function(idx) {
-    purItems.splice(idx,1);
-    if (!purItems.length) purItems.push({productKey:'',productName:'',qty:1,rate:0,amount:0});
-    renderPurItems();
+    purItems.splice(idx, 1);
+    if(!purItems.length) purItems.push({ productKey:'', productName:'', qty:1, rate:0, amount:0 });
+    window.renderPurItems();
+  };
+
+  window.viewPurchase = function(key) {
+    var p = documentData.find(x => x._key === key);
+    if (!p) return;
+    var subtotal = (p.items || []).reduce((s, i) => s + (i.amount || 0), 0);
+    var base = subtotal - (p.discount || 0) + (p.extra || 0);
+    var vatAmt = (p.vatType === 'percent') ? (base * (p.vat || 0) / 100) : (p.vat || 0);
+    var rows = (p.items || []).map((it, i) => '<tr><td>'+(i+1)+'</td><td>'+it.productName+'</td><td class="r">'+fmt(it.qty)+'</td><td class="r">'+fmt(it.rate)+'</td><td class="r">'+fmt(it.amount)+'</td></tr>').join('');
+
+    document.getElementById('purchaseInvoiceContent').innerHTML = \`
+      <div id="purchasePrintArea">
+        <div style="display:flex;justify-content:space-between;margin-bottom:15px">
+          <div><h2 style="margin:0">PURCHASE INVOICE</h2><b>No:</b> \${p.purchaseNo}</div>
+          <div style="text-align:right"><b>Date:</b> \${p.date}<br><b>Supplier:</b> \${p.supplierName}</div>
+        </div>
+        <table class="tbl" style="width:100%; border-collapse:collapse;">
+          <thead>
+            <tr style="background:#f4f4f4"><th>#</th><th style="text-align:left">Item</th><th class="r">Qty</th><th class="r">Rate</th><th class="r">Amt</th></tr>
+          </thead>
+          <tbody>\${rows}</tbody>
+        </table>
+        <div style="display:flex;justify-content:flex-end;margin-top:15px">
+          <div style="width:240px;line-height:1.6">
+            <div style="display:flex;justify-content:space-between"><span>Subtotal:</span><span>\${fmt(subtotal)}</span></div>
+            <div style="display:flex;justify-content:space-between;color:red"><span>Discount:</span><span>-\${fmt(p.discount)}</span></div>
+            <div style="display:flex;justify-content:space-between"><span>Extra:</span><span>+\${fmt(p.extra)}</span></div>
+            <div style="display:flex;justify-content:space-between"><span>VAT (\${p.vatType=='percent'?p.vat+'%':'Flat'}):</span><span>+\${fmt(vatAmt)}</span></div>
+            <div style="display:flex;justify-content:space-between;font-weight:bold;font-size:16px;border-top:1px solid #ddd;margin-top:5px"><span>Total:</span><span>\${fmt(p.total)}</span></div>
+            <div style="display:flex;justify-content:space-between;color:green"><span>Paid:</span><span>\${fmt(p.paid)}</span></div>
+            <div style="display:flex;justify-content:space-between;border-top:1px dashed #ccc"><span>Balance:</span><span>\${fmt(p.total - p.paid)}</span></div>
+          </div>
+        </div>
+      </div>\`;
+    openModal('viewPurchase');
+  };
+
+  // ✅ PRINT FUNCTION ADDED
+  window.printPurchase = function() {
+    const content = document.getElementById('purchasePrintArea').innerHTML;
+    const win = window.open('', '_blank');
+    win.document.write(\`
+      <html>
+        <head>
+          <title>Print Purchase</title>
+          <style>
+            body { font-family: sans-serif; padding: 30px; }
+            .tbl { width: 100%; border-collapse: collapse; margin-top: 20px; }
+            .tbl th, .tbl td { border: 1px solid #eee; padding: 10px; text-align: left; }
+            .r { text-align: right; }
+            h2 { color: #333; }
+            span { font-size: 14px; }
+          </style>
+        </head>
+        <body>\${content}</body>
+      </html>
+    \`);
+    win.document.close();
+    setTimeout(() => {
+      win.print();
+      win.close();
+    }, 500);
   };
 
   window.savePurchase = async function() {
     var supplierKey = document.getElementById('purSupplier').value;
-    var supplier = purSuppliers.find(function(s){ return s._key===supplierKey; });
-    if (!supplier) return alert('Please select supplier');
-    var validItems = purItems.filter(function(i){ return i.productKey && i.qty>0; });
-    if (!validItems.length) {
-      alert('❌ Select valid products');
-      return;
-    }
-    var total = validItems.reduce(function(s,i){ return s+Number(i.amount||0); },0);
-    var paid  = Number(document.getElementById('purPaid').value||0);
+    var supplier = purSuppliers.find(s => s._key === supplierKey);
+    if (!supplier) return alert('Select supplier');
+    var validItems = purItems.filter(i => i.productKey && i.qty > 0);
+    if (!validItems.length) return alert('Add valid products');
+    var total = window.calcPurTotal();
+    var paid = Number(document.getElementById('purPaid').value || 0);
 
-    var res = await saveItem('purchase:', {
-      date: document.getElementById('purDate').value||todayISO(),
+    if (editKey) {
+      var old = documentData.find(x => x._key === editKey);
+      if (old) {
+        for (let it of old.items) {
+          let p = purProducts.find(x => x._key === it.productKey);
+          if (p) { p.stock = (Number(p.stock) || 0) - Number(it.qty); await saveByKey(p._key, cleanForSave(p)); }
+        }
+      }
+    }
+
+    var payload = {
+      date: document.getElementById('purDate').value,
       purchaseNo: document.getElementById('purNo').value,
-      supplierId: supplier._key,
-      supplierName: supplier.name,
-      items: validItems, total: total, paid: paid
-    });
-    if (!res) return;
+      supplierId: supplier._key, supplierName: supplier.name,
+      items: validItems, 
+      discount: Number(document.getElementById('purDiscount').value),
+      extra: Number(document.getElementById('purExtra').value),
+      vat: Number(document.getElementById('purVat').value),
+      vatType: document.getElementById('purVatType').value,
+      total: total, paid: paid
+    };
 
-    for (var j=0; j<validItems.length; j++) {
-      var item = validItems[j];
-      var product = purProducts.find(function(p){ return p._key===item.productKey; });
-      if (!product) continue;
-      var up = cleanForSave(product);
-      up.stock = Number(product.stock||0)+Number(item.qty||0);
-      await saveByKey(product._key, up);
+    var res = editKey ? await saveByKey(editKey, payload) : await saveItem('purchase:', payload);
+    if (res) {
+      for (let it of validItems) {
+        let p = purProducts.find(x => x._key === it.productKey);
+        if (p) { p.stock = (Number(p.stock) || 0) + Number(it.qty); await saveByKey(p._key, cleanForSave(p)); }
+      }
+      closeModal('addPurchase');
+      window.initPurchases();
     }
-
-    var us = cleanForSave(supplier);
-    us.balance = Number(supplier.balance||0)+(total-paid);
-    await saveByKey(supplier._key, us);
-
-    closeModal('addPurchase');
-    await initPurchases();
   };
 
-  initPurchases();
+  window.editPurchase = function(key) {
+    var p = documentData.find(x => x._key === key);
+    if (!p) return;
+    editKey = key;
+    document.getElementById('purModalTitle').innerText = "Edit Purchase";
+    openModal('addPurchase');
+    document.getElementById('purDate').value = p.date;
+    document.getElementById('purNo').value = p.purchaseNo;
+    document.getElementById('purSupplier').value = p.supplierId;
+    document.getElementById('purPaid').value = p.paid;
+    document.getElementById('purDiscount').value = p.discount || 0;
+    document.getElementById('purExtra').value = p.extra || 0;
+    document.getElementById('purVat').value = p.vat || 0;
+    document.getElementById('purVatType').value = p.vatType || 'percent';
+    purItems = JSON.parse(JSON.stringify(p.items));
+    window.renderPurItems();
+  };
+
+  document.addEventListener('click', function(e) {
+    var key = e.target.getAttribute('data-key');
+    if (e.target.classList.contains('viewBtn')) window.viewPurchase(key);
+    if (e.target.classList.contains('editPurchaseBtn')) window.editPurchase(key);
+  });
+
+  window.initPurchases();
   </script>`;
 }
-
-// ============================================================
-// SALES + PRINTABLE INVOICE
-// ============================================================
-function salesPage() {
-  return `
-  <div class="page-header">
-    <div><div class="page-title">Sales</div><div class="page-sub">Sell products and print invoices</div></div>
-    <button class="btn btn-primary" onclick="openSaleModal()">➕ New Sale</button>
-  </div>
-  <div class="card" style="padding:0;overflow:hidden">
-    <div class="table-wrap">
-      <table class="tbl"><thead><tr><th>Date</th><th>Invoice #</th><th>Customer</th><th class="r">Items</th><th class="r">Total</th><th class="r">Received</th><th class="r">Due</th></tr></thead><tbody id="saleBody"></tbody></table>
-    </div>
-  </div>
-
-  <div class="modal-overlay" id="addSale"><div class="modal">
-    <h3>New Sale</h3>
-    <div class="form-row">
-      <div><label>Date</label><input type="date" id="saleDate"></div>
-      <div><label>Invoice Number</label><input id="saleNo" readonly></div>
-    </div>
-    <div class="form-group"><label>Customer</label><select id="saleCustomer"></select></div>
-    <datalist id="saleProductOptions"></datalist>
-    <div style="display:flex;justify-content:space-between;align-items:center;margin:12px 0 8px">
-      <span style="font-weight:600;font-size:13px">Items</span>
-      <button class="btn btn-outline btn-sm" onclick="addSaleItem()">➕ Add Item</button>
-    </div>
-    <div id="saleItems"></div>
-    <div class="form-row" style="margin-top:12px">
-      <div><label>Total</label><div id="saleTotal" style="font-size:18px;font-weight:700">0</div></div>
-      <div><label>Amount Received</label><input type="number" id="saleRcvd" placeholder="0"></div>
-    </div>
-    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">
-      <button class="btn btn-outline" onclick="closeModal('addSale')">Cancel</button>
-      <button class="btn btn-primary" onclick="saveSale()">Save Sale</button>
-    </div>
-  </div></div>
-
-  <div class="modal-overlay" id="viewInvoice"><div class="modal" style="max-width:820px">
-    <h3>Invoice Preview</h3>
-    <div id="invoiceContent"></div>
-    <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:14px">
-      <button class="btn btn-outline" onclick="closeModal('viewInvoice')">Close</button>
-      <button class="btn btn-primary" onclick="printInvoice()">🖨️ Print</button>
-    </div>
-  </div></div>
-
-  <script>
-  var saleProducts = [];
-  var saleCustomers = [];
-  var allSales = [];
-  var _saleItems = [];   // underscore-prefixed to avoid any collision
-  var currentInvoice = null;
-
-  // Override global stubs with real implementations
-  window.addSaleItem = function() {
-    _saleItems.push({ productKey:'', productName:'', qty:1, rate:0, amount:0 });
-    renderSaleItems();
-  };
-
-  window.openSaleModal = function() {
-    document.getElementById('saleDate').value = todayISO();
-    document.getElementById('saleNo').value = txnNo('INV');
-    document.getElementById('saleCustomer').value = '';
-    document.getElementById('saleRcvd').value = '';
-    _saleItems = [];
-    window.addSaleItem();
-    openModal('addSale');
-  };
-
-  window.saveSale = async function() {
-    var customerKey = document.getElementById('saleCustomer').value;
-    var customer = saleCustomers.find(function(c){ return c._key===customerKey; });
-    if (!customer) return alert('Please select customer');
-    var validItems = _saleItems.filter(function(i){ return i.productKey && i.qty>0; });
-    if (!validItems.length) return alert('Add at least one valid product item');
-
-    for (var i=0; i<validItems.length; i++) {
-      var product = saleProducts.find(function(p){ return p._key===validItems[i].productKey; });
-      if (!product) return alert('Invalid product');
-      if ((product.stock||0) < (validItems[i].qty||0)) return alert('Insufficient stock for '+product.name+'. Available: '+fmt(product.stock||0));
-    }
-
-    var total = validItems.reduce(function(s,i){ return s+Number(i.amount||0); },0);
-    var received = Number(document.getElementById('saleRcvd').value||0);
-
-    var res = await saveItem('sale:', {
-      date: document.getElementById('saleDate').value||todayISO(),
-      invoiceNo: document.getElementById('saleNo').value,
-      customerId: customer._key,
-      customerName: customer.name,
-      items: validItems, total: total, received: received
-    });
-    if (!res) return;
-
-    for (var j=0; j<validItems.length; j++) {
-      var item = validItems[j];
-      var sp = saleProducts.find(function(p){ return p._key===item.productKey; });
-      if (!sp) continue;
-      var up = cleanForSave(sp);
-      up.stock = Number(sp.stock||0)-Number(item.qty||0);
-      await saveByKey(sp._key, up);
-    }
-
-    var uc = cleanForSave(customer);
-    uc.balance = Number(customer.balance||0)+(total-received);
-    await saveByKey(customer._key, uc);
-
-    closeModal('addSale');
-    await initSales();
-  };
-
-  function renderSaleItems() {
-    document.getElementById('saleItems').innerHTML = _saleItems.map(function(item,i){
-      return '<div class="form-row" style="grid-template-columns:1fr 70px 100px 100px 36px;align-items:end;margin-bottom:8px">'+
-        '<div><input list="saleProductOptions" placeholder="Search product" value="'+(item.productName||'')+'" oninput="saleSetProduct('+i+',this.value)"></div>'+
-        '<div><input type="number" min="1" value="'+(item.qty||1)+'" onchange="saleQty('+i+',this.value)"></div>'+
-        '<div><input type="number" min="0" value="'+(item.rate||0)+'" onchange="saleRate('+i+',this.value)"></div>'+
-        '<div style="font-weight:600;padding:10px 0;text-align:right">'+fmt(item.amount)+'</div>'+
-        '<div><button class="btn btn-danger btn-sm" onclick="saleRemove('+i+')">✕</button></div>'+
-      '</div>';
-    }).join('');
-    document.getElementById('saleTotal').textContent = fmt(_saleItems.reduce(function(s,i){ return s+(i.amount||0); },0));
-  }
-
-  window.saleSetProduct = function(idx, name) {
-    var n = normalize(name);
-    var p = saleProducts.find(function(x){ return normalize(x.name)===n; });
-    _saleItems[idx].productName = name;
-    _saleItems[idx].productKey = p ? p._key : '';
-    if (p) _saleItems[idx].rate = Number(p.salePrice||0);
-    _saleItems[idx].amount = Number(_saleItems[idx].qty||0)*Number(_saleItems[idx].rate||0);
-    renderSaleItems();
-  };
-
-  window.saleQty = function(idx, value) {
-    _saleItems[idx].qty = Math.max(1, Number(value||1));
-    _saleItems[idx].amount = Number(_saleItems[idx].qty)*Number(_saleItems[idx].rate||0);
-    renderSaleItems();
-  };
-
-  window.saleRate = function(idx, value) {
-    _saleItems[idx].rate = Math.max(0, Number(value||0));
-    _saleItems[idx].amount = Number(_saleItems[idx].qty||0)*Number(_saleItems[idx].rate);
-    renderSaleItems();
-  };
-
-  window.saleRemove = function(idx) {
-    _saleItems.splice(idx,1);
-    if (!_saleItems.length) _saleItems.push({productKey:'',productName:'',qty:1,rate:0,amount:0});
-    renderSaleItems();
-  };
-
-  window.viewInvoiceByKey = function(key) {
-    var sale = allSales.find(function(s){ return s._key===key; });
-    if (!sale) return;
-    currentInvoice = sale;
-    var due = Number(sale.total||0)-Number(sale.received||0);
-    var itemsHtml = (sale.items||[]).map(function(item,i){
-      return '<tr><td>'+(i+1)+'</td><td>'+(item.productName||'')+'</td><td class="r">'+fmt(item.qty||0)+'</td><td class="r">'+fmt(item.rate||0)+'</td><td class="r bold">'+fmt(item.amount||0)+'</td></tr>';
-    }).join('');
-    document.getElementById('invoiceContent').innerHTML =
-      '<div class="invoice-paper" id="invoicePrintArea">'+
-        '<div class="invoice-head">'+
-          '<div><h2 style="margin:0;font-size:22px">Invoice</h2><div class="text-muted" style="font-size:12px">BizManager</div></div>'+
-          '<div style="text-align:right"><div><strong>Invoice #:</strong> '+(sale.invoiceNo||'-')+'</div><div><strong>Date:</strong> '+(sale.date||'-')+'</div></div>'+
-        '</div>'+
-        '<div style="margin:10px 0 14px"><strong>Customer:</strong> '+(sale.customerName||'-')+'</div>'+
-        '<div class="table-wrap"><table class="tbl"><thead><tr><th>#</th><th>Item</th><th class="r">Qty</th><th class="r">Rate</th><th class="r">Amount</th></tr></thead><tbody>'+itemsHtml+'</tbody></table></div>'+
-        '<div style="display:grid;justify-content:end;margin-top:12px;gap:6px">'+
-          '<div><strong>Total:</strong> '+fmt(sale.total||0)+'</div>'+
-          '<div><strong>Received:</strong> '+fmt(sale.received||0)+'</div>'+
-          '<div><strong>Due:</strong> <span class="'+(due>0?'text-danger':'text-success')+'">'+fmt(due)+'</span></div>'+
-        '</div>'+
-      '</div>';
-    openModal('viewInvoice');
-  };
-
-  window.printInvoice = function() {
-    if (!currentInvoice) return;
-    var area = document.getElementById('invoicePrintArea');
-    if (!area) return;
-    var w = window.open('','_blank');
-    if (!w) return alert('Allow popups to print');
-    w.document.write('<html><head><title>Invoice '+(currentInvoice.invoiceNo||'')+'</title><style>body{font-family:Arial;padding:20px}.tbl{width:100%;border-collapse:collapse}.tbl th,.tbl td{border:1px solid #ddd;padding:8px}.r{text-align:right}</style></head><body>'+area.innerHTML+'</body></html>');
-    w.document.close();
-    w.print();
-  };
-
-  async function initSales() {
-    var data = await Promise.all([loadList('sale:'), loadList('product:'), loadList('party:')]);
-    allSales = data[0];
-    saleProducts = data[1];
-    saleCustomers = data[2].filter(function(p){ return p.type==='customer'; });
-
-    document.getElementById('saleCustomer').innerHTML = '<option value="">Select Customer</option>'+
-      saleCustomers.map(function(c){ return '<option value="'+c._key+'">'+c.name+'</option>'; }).join('');
-    document.getElementById('saleProductOptions').innerHTML = saleProducts.map(function(p){ return '<option value="'+p.name+'">Stock: '+(p.stock||0)+'</option>'; }).join('');
-
-    var sorted = allSales.slice().sort(function(a,b){ return (b.date||'').localeCompare(a.date||''); });
-    document.getElementById('saleBody').innerHTML = !sorted.length
-      ? '<tr><td colspan="7" class="empty">No sales yet.</td></tr>'
-      : sorted.map(function(s){
-          var due=(s.total||0)-(s.received||0);
-          return '<tr>'+
-            '<td>'+(s.date||'')+'</td>'+
-            '<td><span class="clickable" onclick="viewInvoiceByKey(\''+s._key+'\')">'+( s.invoiceNo||'-')+'</span></td>'+
-            '<td class="bold">'+(s.customerName||'')+'</td>'+
-            '<td class="r">'+((s.items||[]).length)+'</td>'+
-            '<td class="r bold">'+fmt(s.total)+'</td>'+
-            '<td class="r">'+fmt(s.received)+'</td>'+
-            '<td class="r bold '+(due>0?'text-danger':'text-success')+'">'+fmt(due)+'</td>'+
-          '</tr>';
-        }).join('');
-  }
-
-  initSales();
-  </script>`;
-}
-
 // ============================================================
 // RECEIPTS & PAYMENTS
 // ============================================================
