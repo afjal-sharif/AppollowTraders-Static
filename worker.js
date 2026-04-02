@@ -19,7 +19,7 @@ async function handleRequest(request, env) {
 
   const url = new URL(request.url);
   const PIN = "1234";
-  const MASTER_KEY = "4321";
+  const MASTER_KEY = "698846";
 
     // License systems
   const LICENSE_EXPIRE = "2026-12-31";   // Static date license
@@ -38,6 +38,11 @@ if (url.pathname === "/cron-check") {
   }
 
   await checkVehicleAlerts(env);
+    // auto backup
+  await handleRequest(
+    new Request(request.url.replace("/cron-check","/api/backup")),
+    env
+  );
 
   return new Response("Cron executed successfully");
 } 
@@ -160,9 +165,33 @@ if (url.pathname === "/api/expiry-summary") {
       });
 
     }
-
   }
 
+  const docs = await safeList(env,"doc:");
+
+  docs.forEach(d=>{
+
+  if(!d.expiry) return;
+
+  const exp = new Date(d.expiry);
+  const diff = Math.floor((exp - today)/(1000*60*60*24));
+
+  if(diff <= 0){
+  expired.push({
+  car:"DOC",
+  doc:d.name
+  });
+  }
+  else if(diff <= 30){
+  warning.push({
+  car:"DOC",
+  doc:d.name,
+  days:diff
+  });
+  }
+
+  });
+  
   return Response.json({expired,warning});
 }
 
@@ -180,13 +209,90 @@ if (url.pathname === "/api/expiry-summary") {
     return Response.json({success:true});
   }
 
-  if (url.pathname === "/api/save-vehicle" && request.method === "POST") {
+if (url.pathname === "/api/save-document" && request.method === "POST") {
+
+  if(request.headers.get("content-type").includes("application/json")){
 
     const data = await request.json();
-    await env.DATA_STORE.put("vehicle:"+Date.now(),JSON.stringify(data));
+
+    const key = data.key ? data.key : ("doc:"+Date.now());
+
+  const old = await env.DATA_STORE.get(key);
+  const oldData = old ? JSON.parse(old) : {};
+
+  // version history
+  if(old){
+    await env.DATA_STORE.put(
+      "history:"+key+":"+Date.now(),
+      old
+    );
+  }
+
+    await env.DATA_STORE.put(key, JSON.stringify({
+      ...oldData,
+      name:data.name,
+      number:data.number,
+      type:data.type,
+      expiry:data.expiry
+    }));
 
     return Response.json({success:true});
   }
+
+  const form = await request.formData();
+
+  const file = form.get("file");
+  let fileUrl = "";
+
+  if(file && file.size>0){
+
+    const key = "docs/"+Date.now()+"-"+file.name;
+
+    await env.DOC_BUCKET.put(key,file.stream(),{
+      httpMetadata:{contentType:file.type}
+    });
+
+    fileUrl = key;
+  }
+
+  const key = "doc:"+Date.now();
+
+  await env.DATA_STORE.put(key, JSON.stringify({
+    name:form.get("name"),
+    number:form.get("number"),
+    type:form.get("type"),
+    expiry:form.get("expiry"),
+    file:fileUrl
+  }));
+
+  return Response.json({success:true});
+}
+
+if (url.pathname === "/api/save-vehicle" && request.method === "POST") {
+
+  const data = await request.json();
+
+  const key = data.key ? data.key : ("vehicle:" + Date.now());
+
+  // 👉 SAVE VERSION HISTORY
+  const old = await env.DATA_STORE.get(key);
+
+  if(old){
+    await env.DATA_STORE.put(
+      "history:"+key+":"+Date.now(),
+      old
+    );
+  }
+
+  await env.DATA_STORE.put(key, JSON.stringify({
+    name:data.name,
+    carNumber:data.carNumber,
+    docType:data.docType,
+    expiry:data.expiry
+  }));
+
+  return Response.json({success:true});
+}
 
   if (url.pathname === "/api/delete" && request.method === "POST") {
 
@@ -195,6 +301,116 @@ if (url.pathname === "/api/expiry-summary") {
 
     return Response.json({success:true});
   }
+
+  // ================= BACKUP =================
+
+  if (url.pathname === "/api/backup") {
+
+    const list = await env.DATA_STORE.list();
+
+    const values = await Promise.all(
+      list.keys.map(k => env.DATA_STORE.get(k.name))
+    );
+
+    const data = [];
+
+    for (let i=0;i<values.length;i++){
+      if(values[i]){
+      let parsed;
+
+      try{
+        parsed = JSON.parse(values[i]);
+      }catch{
+        parsed = values[i];
+      }
+
+      data.push({
+        key:list.keys[i].name,
+        value:parsed
+      });
+      }
+    }
+
+    const json = JSON.stringify(data);
+
+    const fileKey = "backup/"+Date.now()+".json";
+
+    await env.DOC_BUCKET.put(fileKey, json);
+
+    return Response.json({success:true});
+  }
+
+  if (url.pathname === "/api/backups") {
+
+    const list = await env.DOC_BUCKET.list({ prefix:"backup/" });
+
+    return Response.json(list.objects);
+  }
+
+  if (url.pathname === "/api/delete-backup" && request.method === "POST") {
+
+    const data = await request.json();
+
+    await env.DOC_BUCKET.delete(data.key);
+
+    return Response.json({success:true});
+  }
+
+  // DELETE ALL
+  if (url.pathname === "/api/delete-all" && request.method === "POST") {
+
+    const data = await request.json();
+
+    const list = await env.DATA_STORE.list({ prefix: data.prefix });
+
+    await Promise.all(
+      list.keys.map(k => env.DATA_STORE.delete(k.name))
+    );
+
+    return Response.json({success:true});
+  }
+
+  if (url.pathname === "/api/restore" && request.method === "POST") {
+
+    const data = await request.json();
+
+    const file = await env.DOC_BUCKET.get(data.key);
+
+    const json = await file.text();
+    const items = JSON.parse(json);
+
+    for(const item of items){
+      await env.DATA_STORE.put(item.key, JSON.stringify(item.value));
+    }
+
+    return Response.json({success:true});
+  }
+
+  if (url.pathname === "/api/history") {
+
+  const key = url.searchParams.get("key");
+
+  const list = await env.DATA_STORE.list({ prefix:"history:"+key });
+
+  return Response.json(list.keys);
+}
+
+  if (url.pathname === "/file") {
+
+  const key = url.searchParams.get("key");
+
+  const object = await env.DOC_BUCKET.get(key);
+
+  if(!object) return new Response("Not found",{status:404});
+
+  return new Response(object.body,{
+    headers:{
+      "content-type":object.httpMetadata.contentType
+    }
+    
+  });
+  
+}
 
   if (url.pathname === "/add-bank")
   return html(layout(addBankPage()));
@@ -214,11 +430,19 @@ if (url.pathname === "/api/expiry-summary") {
   if (url.pathname === "/admin")
     return html(layout(adminPage()));
 
+  if (url.pathname === "/documents")
+    return html(layout(documentsPage()));
+
+  if (url.pathname === "/add-document")
+    return html(layout(addDocumentPage()));
+
+  if (url.pathname === "/api/documents")
+    return Response.json(await safeList(env,"doc:"));
+
   await checkVehicleAlerts(env);
 
   return html(layout(await homePage()));
 }
-
 
 async function safeList(env, prefix) {
 
@@ -324,7 +548,7 @@ return `
 <head>
 
 <meta name="viewport" content="width=device-width, initial-scale=1">
-
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
 
@@ -454,11 +678,13 @@ font-size:14px
 
 <button onclick="location.href='/'">🏠 Dashboard</button>
 <button onclick="location.href='/banks'">🏦 Banks</button>
+<button onclick="location.href='/documents'">📄 Documents</button>
 <button onclick="location.href='/vehicles'">🚗 Vehicles</button>
 
 <hr>
 
 <button onclick="location.href='/add-bank'">➕ Add Bank</button>
+<button onclick="location.href='/add-document'">➕ Add Document</button>
 <button onclick="location.href='/add-vehicle'">➕ Add Vehicle</button>
 
 </div>
@@ -617,6 +843,7 @@ margin-bottom:0px;
  <br>
 
 <button onclick="location.href='/banks'">🏦 ব্যাংক একাউন্টস</button>
+<button onclick="location.href='/documents'">📄 ব্যবসায়িক ডকুমেন্টস</button>
 <button onclick="location.href='/vehicles'">🚗 গাড়ির ডকুমেন্টস</button>
 <br><br><br><br><br><br><br><br>
 <div id="licenseFooter" style="margin-top:40px;font-size:11px;text-align:center;color:#64748b"></div>
@@ -675,13 +902,19 @@ el.onclick=function(){
 const car=this.dataset.car;
 const doc=this.dataset.doc;
 
-location.href="/vehicles?car="+encodeURIComponent(car)+"&doc="+encodeURIComponent(doc);
+if(car === "DOC"){
+  location.href="/documents?doc="+encodeURIComponent(doc);
+}else{
+  location.href="/vehicles?car="+encodeURIComponent(car)+"&doc="+encodeURIComponent(doc);
+}
 
 };
 
 });
 
 });
+
+
 
 </script>
 `;
@@ -942,7 +1175,112 @@ whatsapp.onclick=()=>window.open(
 "_blank"
 );
 
-row.append(copy,sms,whatsapp);
+const edit=document.createElement("button");
+edit.innerHTML='<i class="fa-solid fa-pen"></i>';
+
+edit.onclick=()=>{
+
+card.innerHTML="";
+
+// inputs
+const vname=document.createElement("input");
+vname.value=v.name;
+
+const vcar=document.createElement("input");
+vcar.value=v.carNumber;
+
+// ✅ DROPDOWN (FIXED)
+const vdoc=document.createElement("select");
+
+const options=[
+"Registration Certificate (Smart Card)",
+"Fitness Certificate",
+"Tax Token",
+"Route Permit",
+"Insurance Certificate",
+"Others"
+];
+
+options.forEach(opt=>{
+const o=document.createElement("option");
+o.value=opt;
+o.textContent=opt;
+
+if(opt===v.docType) o.selected=true;
+
+vdoc.appendChild(o);
+});
+
+// ✅ OTHER FIELD
+const vdocOther=document.createElement("input");
+vdocOther.placeholder="Describe Document Type";
+
+if(!options.includes(v.docType)){
+vdoc.value="Others";
+vdocOther.style.display="block";
+vdocOther.value=v.docType;
+}else{
+vdocOther.style.display="none";
+}
+
+vdoc.onchange=()=>{
+vdocOther.style.display = vdoc.value==="Others" ? "block" : "none";
+};
+
+// date
+const vexp=document.createElement("input");
+vexp.type="date";
+vexp.value=v.expiry;
+
+// buttons
+const save=document.createElement("button");
+save.innerText="💾 Save";
+
+const cancel=document.createElement("button");
+cancel.innerText="❌ Cancel";
+
+const row=document.createElement("div");
+row.className="btn-row";
+
+row.append(save,cancel);
+
+// append all
+card.append(vname,vcar,vdoc,vdocOther,vexp,row);
+
+// SAVE
+save.onclick=()=>{
+
+fetch('/api/save-vehicle',{
+method:'POST',
+headers:{'Content-Type':'application/json'},
+body:JSON.stringify({
+key:v.key,
+name:vname.value,
+carNumber:vcar.value,
+docType: vdoc.value==="Others" ? vdocOther.value : vdoc.value,
+expiry:vexp.value
+})
+})
+.then(()=>{
+
+// update local UI
+v.name=vname.value;
+v.carNumber=vcar.value;
+v.docType= vdoc.value==="Others" ? vdocOther.value : vdoc.value;
+v.expiry=vexp.value;
+
+renderVehicles(allVehicles);
+
+});
+
+};
+
+// CANCEL
+cancel.onclick=()=>renderVehicles(allVehicles);
+
+};
+
+row.append(copy,sms,whatsapp,edit);
 card.appendChild(row);
 
 div.appendChild(card);
@@ -981,9 +1319,9 @@ return `
 <select id="vtype" onchange="toggleOtherDoc()">
 <option value="">Select Document Type</option>
 <option>Registration Certificate (Smart Card)</option>
-<option>Route Permit</option>
 <option>Fitness Certificate</option>
 <option>Tax Token</option>
+<option>Route Permit</option>
 <option>Insurance Certificate</option>
 <option value="other">Others</option>
 </select>
@@ -1025,6 +1363,519 @@ location.href="/vehicles";
 });
 
 }
+
+</script>
+`;
+}
+
+function documentsPage(){
+
+return `<br>
+<h2>📄 Business Documents</h2>
+
+<input id="searchDoc" placeholder="Search document..." oninput="filterDocs()">
+
+<div id="docs"></div>
+
+<div id="viewerModal" style="
+display:none;
+position:fixed;
+top:0;
+left:0;
+width:100%;
+height:100%;
+background:rgba(0,0,0,0.85);
+z-index:9999;
+justify-content:center;
+align-items:center;
+">
+
+<div style="
+background:#fff;
+width:95%;
+max-width:900px;
+height:90%;
+border-radius:16px;
+display:flex;
+flex-direction:column;
+overflow:hidden;
+position:relative;
+">
+
+<!-- HEADER -->
+<div style="
+display:flex;
+justify-content:space-between;
+align-items:center;
+padding:10px;
+background:#1e293b;
+color:white;
+">
+
+<div style="font-weight:600">📄 Document Viewer</div>
+
+<div style="display:flex;gap:6px">
+
+<button onclick="zoomIn()" style="padding:6px 10px">+</button>
+<button onclick="zoomOut()" style="padding:6px 10px">−</button>
+<button onclick="resetZoom()" style="padding:6px 10px">⟳</button>
+
+<button id="downloadBtn" style="padding:6px 10px">
+<i class="fa-solid fa-download"></i>
+</button>
+
+<button onclick="closeViewer()" style="
+background:#ef4444;
+padding:6px 10px;
+">✖</button>
+
+</div>
+</div>
+
+<div id="viewerContent" style="
+width:100%;
+height:100%;
+overflow:hidden;
+position:relative;
+touch-action:none;
+background:#f1f5f9;
+">
+
+<div id="zoomWrapper" style="
+position:absolute;
+top:0;
+left:0;
+transform-origin:0 0;
+">
+
+</div>
+
+</div>
+
+
+<script>
+function openViewer(key){
+document.getElementById("viewerModal").style.display="flex";
+document.getElementById("viewerFrame").src="/file?key="+key;
+}
+
+function closeViewer(){
+document.getElementById("viewerModal").style.display="none";
+document.getElementById("viewerFrame").src="";
+}
+
+const params = new URLSearchParams(window.location.search);
+const highlightDoc = params.get("doc");
+
+let allDocs=[];
+
+fetch('/api/documents')
+.then(r=>r.json())
+.then(data=>{
+allDocs=data||[];
+renderDocs(allDocs);
+});
+
+function renderDocs(data){
+
+const div=document.getElementById('docs');
+div.innerHTML="";
+
+const today=new Date();
+
+data.forEach(d=>{
+
+const exp=new Date(d.expiry);
+const diff=Math.floor((exp-today)/(1000*60*60*24));
+
+let warn="";
+
+if(diff<=0)
+warn="<div class='warn expired'>🚨 মেয়াদ শেষ</div>";
+else if(diff<=30)
+warn="<div class='warn w30'>⚠ "+diff+" দিন</div>";
+
+const card=document.createElement("div");
+card.className="card";
+
+if(highlightDoc && highlightDoc === d.name){
+
+card.style.border="3px solid #ef4444";
+card.style.background="#fee2e2";
+card.style.animation="flashHighlight 1s ease-in-out 3";
+
+setTimeout(()=>{
+card.scrollIntoView({
+behavior:"smooth",
+block:"center"
+});
+},200);
+
+}
+
+// thumbnail
+let thumb="";
+if(d.file){
+thumb = "<img src='/file?key="+d.file+"' style='width:100%;max-height:150px;object-fit:cover;border-radius:10px;margin-bottom:10px'>";
+}
+
+const text =
+"Document: "+d.name+"\\n"+
+"Type: "+d.type+"\\n"+
+"Number: "+d.number+"\\n"+
+"Expiry: "+d.expiry;
+
+card.innerHTML =
+warn+
+thumb+
+"<b>"+d.name+"</b><br>"+
+"Type: "+d.type+"<br>"+
+"Number: "+d.number+"<br>"+
+"Expiry: "+d.expiry;
+
+// buttons
+const row=document.createElement("div");
+row.className="btn-row";
+
+// copy
+const copy=document.createElement("button");
+copy.innerHTML='<i class="fa-solid fa-copy"></i>';
+copy.onclick=()=>navigator.clipboard.writeText(text);
+
+// sms
+const sms=document.createElement("button");
+sms.innerHTML='<i class="fa-solid fa-comment-sms"></i>';
+sms.onclick=()=>window.location.href="sms:?body="+encodeURIComponent(text);
+
+// whatsapp
+const wa=document.createElement("button");
+wa.innerHTML='<i class="fa-brands fa-square-whatsapp"></i>';
+wa.onclick=()=>window.open(
+"https://wa.me/?text="+encodeURIComponent(text),
+"_blank"
+);
+
+// view file
+if(d.file){
+const view=document.createElement("button");
+view.innerHTML='<i class="fa-solid fa-file"></i>';
+view.onclick=()=>openViewer(d.file);
+row.appendChild(view);
+}
+// Download file
+const download=document.createElement("button");
+download.innerHTML='<i class="fa-solid fa-download"></i>';
+download.onclick=()=>window.open("/file?key="+d.file,"_blank");
+
+row.appendChild(download);
+
+// delete
+const del=document.createElement("button");
+del.innerHTML='<i class="fa-solid fa-trash"></i>';
+del.onclick=()=>{
+
+if(!confirm("Delete this document?")) return;
+
+fetch('/api/delete',{
+method:'POST',
+headers:{'Content-Type':'application/json'},
+body:JSON.stringify({key:d.key})
+})
+.then(()=>renderDocs(allDocs.filter(x=>x.key!==d.key)));
+
+};
+
+// edit
+const edit=document.createElement("button");
+edit.innerHTML='<i class="fa-solid fa-pen"></i>';
+
+edit.onclick=()=>{
+
+card.innerHTML="";
+
+const name=document.createElement("input");
+name.value=d.name;
+
+const number=document.createElement("input");
+number.value=d.number;
+
+const type=document.createElement("input");
+type.value=d.type;
+
+const exp=document.createElement("input");
+exp.type="date";
+exp.value=d.expiry;
+
+const save=document.createElement("button");
+save.innerText="💾";
+
+const cancel=document.createElement("button");
+cancel.innerText="❌";
+
+const row2=document.createElement("div");
+row2.className="btn-row";
+row2.append(save,cancel);
+
+card.append(name,number,type,exp,row2);
+
+save.onclick=()=>{
+
+fetch('/api/save-document',{
+method:'POST',
+headers:{'Content-Type':'application/json'},
+body:JSON.stringify({
+key:d.key,
+name:name.value,
+number:number.value,
+type:type.value,
+expiry:exp.value
+})
+})
+.then(()=>{
+
+d.name=name.value;
+d.number=number.value;
+d.type=type.value;
+d.expiry=exp.value;
+
+renderDocs(allDocs);
+
+});
+
+};
+
+cancel.onclick=()=>renderDocs(allDocs);
+
+};
+
+row.append(copy,sms,wa,edit);
+card.appendChild(row);
+
+div.appendChild(card);
+
+});
+
+}
+
+function filterDocs(){
+
+const q=document.getElementById("searchDoc").value.toLowerCase();
+
+renderDocs(
+allDocs.filter(d=>
+(d.name||"").toLowerCase().includes(q)||
+(d.type||"").toLowerCase().includes(q)||
+(d.number||"").toLowerCase().includes(q)
+)
+);
+
+}
+
+let scale = 1;
+let posX = 0;
+let posY = 0;
+
+let startX = 0;
+let startY = 0;
+let startDist = 0;
+let isDragging = false;
+
+let currentFile = "";
+let pdfDoc = null;
+
+function openViewer(key){
+
+  currentFile = key;
+
+  document.getElementById("viewerModal").style.display="flex";
+
+  const wrapper = document.getElementById("zoomWrapper");
+  wrapper.innerHTML="";
+
+  if(key.endsWith(".pdf")){
+    loadPDF(key);
+  }else{
+    loadImage(key);
+  }
+
+  document.getElementById("downloadBtn").onclick = ()=>{
+    window.open("/file?key="+key,"_blank");
+  };
+
+  resetZoom();
+}
+
+function closeViewer(){
+  document.getElementById("viewerModal").style.display="none";
+  document.getElementById("zoomWrapper").innerHTML="";
+}
+
+// IMAGE
+function loadImage(key){
+  const img=document.createElement("img");
+  img.src="/file?key="+key;
+  img.style.display="block";
+  img.style.maxWidth="none";
+
+  document.getElementById("zoomWrapper").appendChild(img);
+}
+
+// PDF
+async function loadPDF(key){
+  const pdf = await pdfjsLib.getDocument("/file?key="+key).promise;
+  pdfDoc = pdf;
+  renderPDFPage(1);
+}
+
+async function renderPDFPage(pageNum){
+
+  const wrapper = document.getElementById("zoomWrapper");
+  wrapper.innerHTML="";
+
+  const page = await pdfDoc.getPage(pageNum);
+  const viewport = page.getViewport({ scale: 1 });
+
+  const canvas=document.createElement("canvas");
+  const ctx=canvas.getContext("2d");
+
+  canvas.height=viewport.height;
+  canvas.width=viewport.width;
+
+  await page.render({
+    canvasContext: ctx,
+    viewport: viewport
+  }).promise;
+
+  wrapper.appendChild(canvas);
+}
+
+// TRANSFORM
+function updateTransform(){
+  document.getElementById("zoomWrapper").style.transform =
+    "translate("+posX+"px,"+posY+"px) scale("+scale+")";
+}
+
+// BUTTON ZOOM
+function zoomIn(){
+  scale+=0.2;
+  updateTransform();
+}
+
+function zoomOut(){
+  scale-=0.2;
+  if(scale<0.5) scale=0.5;
+  updateTransform();
+}
+
+function resetZoom(){
+  scale=1;
+  posX=0;
+  posY=0;
+  updateTransform();
+}
+
+// TOUCH SYSTEM
+const container = document.getElementById("viewerContent");
+
+container.addEventListener("touchstart",(e)=>{
+
+  if(e.touches.length===1){
+    isDragging=true;
+    startX=e.touches[0].clientX-posX;
+    startY=e.touches[0].clientY-posY;
+  }
+
+  if(e.touches.length===2){
+    isDragging=false;
+
+    const dx=e.touches[0].clientX-e.touches[1].clientX;
+    const dy=e.touches[0].clientY-e.touches[1].clientY;
+
+    startDist=Math.sqrt(dx*dx+dy*dy);
+  }
+
+});
+
+container.addEventListener("touchmove",(e)=>{
+
+  if(e.touches.length===1 && isDragging){
+    posX=e.touches[0].clientX-startX;
+    posY=e.touches[0].clientY-startY;
+    updateTransform();
+  }
+
+  if(e.touches.length===2){
+
+    const dx=e.touches[0].clientX-e.touches[1].clientX;
+    const dy=e.touches[0].clientY-e.touches[1].clientY;
+
+    const newDist=Math.sqrt(dx*dx+dy*dy);
+
+    let zoom=newDist/startDist;
+
+    scale=Math.min(Math.max(scale*zoom,0.5),5);
+
+    startDist=newDist;
+
+    updateTransform();
+  }
+
+},{passive:false});
+
+container.addEventListener("touchend",()=>{
+  isDragging=false;
+});
+
+</script>
+`;
+}
+
+function addDocumentPage(){
+
+return `
+<h2>➕ Add Business Document</h2>
+
+<form id="form">
+
+<input name="name" placeholder="Document Name (e.g. Trade License)" required>
+
+<input name="number" placeholder="Document Number">
+
+<select name="type">
+<option>NID</option>
+<option>Passport</option>
+<option>Driving License</option>
+<option>Trade License</option>
+<option>TIN Certificate</option>
+<option>BIN Certificate</option>
+<option>Others</option>
+</select>
+
+<input type="date" name="expiry">
+
+<input type="file" name="file">
+
+<button type="submit">Save Document</button>
+
+</form>
+
+<script>
+
+document.getElementById("form").onsubmit=(e)=>{
+e.preventDefault();
+
+const formData=new FormData(e.target);
+
+fetch('/api/save-document',{
+method:'POST',
+body:formData
+})
+.then(()=>{
+alert("Document Saved");
+location.href="/documents";
+});
+
+};
 
 </script>
 `;
@@ -1200,8 +2051,167 @@ Instant update
 <select id="deleteSelect"></select>
 <button onclick="deleteItem()">Delete Selected</button>
 
+<h3>⚠ Delete All Data</h3>
+
+<button onclick="deleteAll('bank:')">Delete All Banks</button>
+<button onclick="deleteAll('vehicle:')">Delete All Vehicles</button>
+<button onclick="deleteAll('doc:')">Delete All Documents</button>
+
+<h3>💾 Backup System</h3>
+
+<button onclick="createBackup()">Create Backup</button>
+
+<div id="backupList"></div>
+
 <script>
 
+// ================= DELETE =================
+function deleteAll(prefix){
+
+if(!confirm("Are you sure?")) return;
+
+fetch('/api/delete-all',{
+method:'POST',
+headers:{'Content-Type':'application/json'},
+body:JSON.stringify({prefix})
+})
+.then(()=>alert("Deleted"));
+
+}
+
+// ================= BACKUP =================
+function createBackup(){
+
+fetch('/api/backup')
+.then(r=>r.json())
+.then(()=>{
+alert("Backup created");
+loadBackups();
+});
+
+}
+
+// ================= LOAD BACKUPS =================
+function loadBackups(){
+
+fetch('/api/backups')
+.then(r=>r.json())
+.then(list=>{
+
+let html="";
+
+if(!list.length){
+html="<div class='card'>No backups found</div>";
+}
+
+list.forEach(b=>{
+
+const timestamp = b.key.split("/")[1].replace(".json","");
+const date = new Date(parseInt(timestamp)).toLocaleString();
+const size = Math.round((b.size || 0)/1024);
+
+html += "<div class='card'>" +
+"<b>📦 Backup</b><br>" +
+"Date: " + date + "<br>" +
+"Size: " + size + " KB<br>" +
+
+"<div class='btn-row'>" +
+
+"<button class='download-btn' data-key='"+b.key+"'>⬇ Download</button>" +
+"<button class='restore-btn' data-key='"+b.key+"'>♻ Restore</button>" +
+"<button class='delete-btn' data-key='"+b.key+"'>🗑 Delete</button>" +
+
+"</div>" +
+
+"</div>";
+
+});
+
+document.getElementById("backupList").innerHTML=html;
+
+setTimeout(()=>{
+
+document.querySelectorAll(".download-btn").forEach(btn=>{
+btn.onclick = ()=>{
+downloadBackup(btn.dataset.key);
+};
+});
+
+document.querySelectorAll(".restore-btn").forEach(btn=>{
+btn.onclick = ()=>{
+restoreBackup(btn.dataset.key);
+};
+});
+
+document.querySelectorAll(".delete-btn").forEach(btn=>{
+btn.onclick = ()=>{
+deleteBackup(btn.dataset.key);
+};
+});
+
+},100);
+
+});
+
+}
+
+// ================= DOWNLOAD =================
+function downloadBackup(key){
+
+fetch('/file?key=' + key)
+.then(r=>r.blob())
+.then(blob=>{
+
+const a=document.createElement("a");
+
+const filename = key.split("/")[1];
+
+a.href=URL.createObjectURL(blob);
+a.download="backup-"+filename;
+
+a.click();
+
+});
+
+}
+
+// ================= RESTORE =================
+function restoreBackup(key){
+
+if(!confirm("Restore this backup?")) return;
+
+fetch('/api/restore',{
+method:'POST',
+headers:{'Content-Type':'application/json'},
+body:JSON.stringify({key})
+})
+.then(()=>alert("Restored successfully"));
+
+}
+
+// ================= DELETE BACKUP =================
+function deleteBackup(key){
+
+if(!confirm("Delete this backup file?")) return;
+
+fetch('/api/delete-backup',{
+method:'POST',
+headers:{'Content-Type':'application/json'},
+body:JSON.stringify({key})
+})
+.then(()=>{
+alert("Backup deleted");
+loadBackups();
+});
+
+}
+
+// INIT
+loadBackups();
+
+</script>
+
+<script>
 
 loadOptions();
 
