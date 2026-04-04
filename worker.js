@@ -1848,6 +1848,10 @@ return `
 <option>Trade License</option>
 <option>TIN Certificate</option>
 <option>BIN Certificate</option>
+<option>Firearms License</option>
+<option>Import License</option>
+<option>Export License</option>
+<option>Tender (PWD/LGED/RHD) License</option>
 <option>Others</option>
 </select>
 
